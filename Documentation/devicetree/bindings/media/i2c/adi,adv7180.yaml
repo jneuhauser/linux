@@ -92,6 +92,31 @@ allOf:
       properties:
         compatible:
           contains:
+            const: adi,adv7280
+    then:
+      properties:
+        port:
+          properties:
+            endpoint:
+              properties:
+                bus-type:
+                  enum: [5, 6]
+                bus-width:
+                  const: 8
+    else:
+      properties:
+        port:
+          properties:
+            endpoint:
+              properties:
+                bus-type:
+                  not:
+                    const: 5
+
+  - if:
+      properties:
+        compatible:
+          contains:
             const: adi,adv7180cp
     then:
       properties:
@@ -183,6 +208,30 @@ examples:
                                     adv7180_out: endpoint {
                                             remote-endpoint = <&vin4_in>;
                                     };
+                            };
+                    };
+            };
+    };
+
+  - |
+    #include <dt-bindings/media/video-interfaces.h>
+
+    i2c {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            composite-in@21 {
+                    compatible = "adi,adv7280";
+                    reg = <0x21>;
+
+                    port {
+                            adv7280_out: endpoint {
+                                    bus-type = <MEDIA_BUS_TYPE_PARALLEL>;
+                                    bus-width = <8>;
+                                    hsync-active = <0>;
+                                    vsync-active = <0>;
+                                    pclk-sample = <1>;
+                                    remote-endpoint = <&dcmipp_in>;
                             };
                     };
             };
