@@ -838,11 +838,13 @@ static int adv7180_get_mbus_config(struct v4l2_subdev *sd,
 		cfg->type = V4L2_MBUS_CSI2_DPHY;
 		cfg->bus.mipi_csi2.num_data_lanes = 1;
 		cfg->bus.mipi_csi2.flags = 0;
+	} else if (state->mbus_type == V4L2_MBUS_PARALLEL) {
+		cfg->bus.parallel.flags = V4L2_MBUS_MASTER |
+					  V4L2_MBUS_DATA_ACTIVE_HIGH |
+					  state->mbus_flags;
+		cfg->type = V4L2_MBUS_PARALLEL;
 	} else {
-		/*
-		 * The ADV7180 sensor supports BT.601/656 output modes.
-		 * The BT.656 is default and not yet configurable by s/w.
-		 */
+		/* BT.656 is the default output mode. */
 		cfg->bus.parallel.flags = V4L2_MBUS_MASTER |
 					  V4L2_MBUS_PCLK_SAMPLE_RISING |
 					  V4L2_MBUS_DATA_ACTIVE_HIGH;
