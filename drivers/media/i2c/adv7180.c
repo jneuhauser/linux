@@ -831,6 +831,20 @@ static int adv7180_get_mbus_config(struct v4l2_subdev *sd,
 		cfg->type = V4L2_MBUS_CSI2_DPHY;
 		cfg->bus.mipi_csi2.num_data_lanes = 1;
 		cfg->bus.mipi_csi2.flags = 0;
+	} else if (state->mbus_type == V4L2_MBUS_PARALLEL) {
+		unsigned int flags = state->mbus_flags;
+
+		/* Report what adv7280_init_parallel_sync() programs. */
+		flags |= (flags & V4L2_MBUS_HSYNC_ACTIVE_HIGH) ?
+			 0 : V4L2_MBUS_HSYNC_ACTIVE_LOW;
+		flags |= (flags & V4L2_MBUS_VSYNC_ACTIVE_LOW) ?
+			 0 : V4L2_MBUS_VSYNC_ACTIVE_HIGH;
+		flags |= (flags & V4L2_MBUS_PCLK_SAMPLE_FALLING) ?
+			 0 : V4L2_MBUS_PCLK_SAMPLE_RISING;
+
+		cfg->type = V4L2_MBUS_PARALLEL;
+		cfg->bus.parallel.flags = V4L2_MBUS_MASTER |
+					  V4L2_MBUS_DATA_ACTIVE_HIGH | flags;
 	} else {
 		/*
 		 * The ADV7180 sensor supports BT.601/656 output modes.
