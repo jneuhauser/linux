@@ -101,6 +101,11 @@
 #define ADV7180_REG_CTRL_2		0x001d
 #define ADV7180_REG_VSYNC_FIELD_CTL_1	0x0031
 #define ADV7180_VSYNC_FIELD_CTL_1_NEWAV 0x12
+#define ADV7180_REG_POLARITY		0x0037
+/* TODO: verify the PHS and PVS bit positions against UG-637 */
+#define ADV7180_POLARITY_PHS		BIT(7)
+#define ADV7180_POLARITY_PVS		BIT(5)
+#define ADV7180_POLARITY_PCLK		BIT(0)
 #define ADV7180_REG_MANUAL_WIN_CTL_1	0x003d
 #define ADV7180_REG_MANUAL_WIN_CTL_2	0x003e
 #define ADV7180_REG_MANUAL_WIN_CTL_3	0x003f
@@ -109,6 +114,14 @@
 #define ADV7180_REG_CLAMP_ADJ		0x005a
 #define ADV7180_REG_RES_CIR		0x005f
 #define ADV7180_REG_DIFF_MODE		0x0060
+#define ADV7280_REG_HS_OUT_SEL		0x006a
+#define ADV7280_REG_FLD_OUT_SEL		0x006b
+#define ADV7280_OUT_SEL_MASK		GENMASK(2, 0)
+#define ADV7280_OUT_SEL_HSYNC		0x0
+#define ADV7280_OUT_SEL_VSYNC		0x1
+#define ADV7280_OUT_SEL_FIELD		0x2
+#define ADV7280_OUT_SEL_DE		0x3
+#define ADV7280_OUT_SEL_SFL		0x4
 
 #define ADV7180_REG_ICONF1		0x2040
 #define ADV7180_ICONF1_ACTIVE_LOW	0x01
@@ -1105,8 +1118,57 @@ static int adv7180_select_input(struct adv7180_state *state, unsigned int input)
 	return adv7180_write(state, ADV7180_REG_INPUT_CONTROL, ret);
 }
 
+static int adv7280_set_sync_outputs(struct adv7180_state *state)
+{
+	int ret;
+
+	if (state->mbus_type != V4L2_MBUS_PARALLEL)
+		return 0;
+
+	/* Output VSYNC instead of FIELD on the VS/FIELD pin */
+	ret = adv7180_read(state, ADV7280_REG_FLD_OUT_SEL);
+	if (ret < 0)
+		return ret;
+
+	ret &= ~ADV7280_OUT_SEL_MASK;
+	ret |= ADV7280_OUT_SEL_VSYNC;
+	ret = adv7180_write(state, ADV7280_REG_FLD_OUT_SEL, ret);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * Output DE instead of HSYNC on the HS pin. The HSYNC pulse is not
+	 * guaranteed to span the whole horizontal blanking, while DE is low
+	 * across exactly the horizontal blanking. This is needed by receivers
+	 * which capture data while HSYNC is inactive, such as the STM32
+	 * DCMIPP. Such a receiver is then configured with hsync-active = <0>.
+	 */
+	ret = adv7180_write(state, ADV7280_REG_HS_OUT_SEL, ADV7280_OUT_SEL_DE);
+	if (ret < 0)
+		return ret;
+
+	ret = adv7180_read(state, ADV7180_REG_POLARITY);
+	if (ret < 0)
+		return ret;
+
+	ret &= ~(ADV7180_POLARITY_PHS | ADV7180_POLARITY_PVS);
+	ret |= ADV7180_POLARITY_PCLK;
+	/*
+	 * DE is active high when PHS is cleared, which makes the HS pin low
+	 * during horizontal blanking, i.e. hsync-active = <0>.
+	 */
+	if (state->mbus_flags & V4L2_MBUS_HSYNC_ACTIVE_HIGH)
+		ret |= ADV7180_POLARITY_PHS;
+	if (state->mbus_flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
+		ret |= ADV7180_POLARITY_PVS;
+
+	return adv7180_write(state, ADV7180_REG_POLARITY, ret);
+}
+
 static int adv7182_init(struct adv7180_state *state)
 {
+	int ret;
+
 	if (state->csi_client)
 		adv7180_write(state, ADV7180_REG_CSI_SLAVE_ADDR,
 			      state->csi_client->addr << 1);
@@ -1154,6 +1216,10 @@ static int adv7182_init(struct adv7180_state *state)
 		}
 		adv7180_write(state, ADV7180_REG_OUTPUT_CONTROL, 0x0c);
 		adv7180_write(state, ADV7180_REG_CTRL_2, 0x40);
+
+		ret = adv7280_set_sync_outputs(state);
+		if (ret < 0)
+			return ret;
 	}
 
 	adv7180_write(state, 0x0013, 0x00);
