@@ -13,12 +13,14 @@
 #include <linux/i2c.h>
 #include <linux/slab.h>
 #include <linux/of.h>
+#include <linux/property.h>
 #include <linux/gpio/consumer.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-event.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ctrls.h>
+#include <media/v4l2-fwnode.h>
 #include <linux/mutex.h>
 #include <linux/delay.h>
 
@@ -195,6 +197,7 @@ struct adv7180_state;
 #define ADV7180_FLAG_MIPI_CSI2		BIT(2)
 #define ADV7180_FLAG_I2P		BIT(3)
 #define ADV7180_FLAG_TEST_PATTERN	BIT(4)
+#define ADV7180_FLAG_SYNC_PINS		BIT(5)
 
 struct adv7180_chip_info {
 	unsigned int flags;
@@ -223,6 +226,8 @@ struct adv7180_state {
 	const struct adv7180_chip_info *chip_info;
 	enum v4l2_field		field;
 	bool			force_bt656_4;
+	enum v4l2_mbus_type	mbus_type;
+	unsigned int		mbus_flags;
 };
 #define to_adv7180_sd(_ctrl) (&container_of(_ctrl->handler,		\
 					    struct adv7180_state,	\
@@ -1306,7 +1311,8 @@ static const struct adv7180_chip_info adv7182_info = {
 };
 
 static const struct adv7180_chip_info adv7280_info = {
-	.flags = ADV7180_FLAG_V2 | ADV7180_FLAG_I2P | ADV7180_FLAG_TEST_PATTERN,
+	.flags = ADV7180_FLAG_V2 | ADV7180_FLAG_I2P | ADV7180_FLAG_TEST_PATTERN |
+		ADV7180_FLAG_SYNC_PINS,
 	.valid_input_mask = BIT(ADV7182_INPUT_CVBS_AIN1) |
 		BIT(ADV7182_INPUT_CVBS_AIN2) |
 		BIT(ADV7182_INPUT_CVBS_AIN3) |
@@ -1439,6 +1445,70 @@ static const struct adv7180_chip_info adv7282_m_info = {
 	.select_input = adv7182_select_input,
 };
 
+static int adv7180_parse_output_endpoint(struct adv7180_state *state)
+{
+	struct device *dev = &state->client->dev;
+	struct v4l2_fwnode_endpoint vep = {
+		.bus_type = V4L2_MBUS_UNKNOWN,
+	};
+	struct fwnode_handle *ep;
+	unsigned int port = 0;
+	int ret;
+
+	/* Keep the BT.656 default if the output endpoint is not described. */
+	state->mbus_type = V4L2_MBUS_BT656;
+
+	/* The ADV7180CP and ADV7180ST have input ports before the output port. */
+	if (device_is_compatible(dev, "adi,adv7180cp"))
+		port = 3;
+	else if (device_is_compatible(dev, "adi,adv7180st"))
+		port = 6;
+
+	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), port, 0,
+					     FWNODE_GRAPH_ENDPOINT_NEXT);
+	if (!ep)
+		return 0;
+
+	ret = v4l2_fwnode_endpoint_parse(ep, &vep);
+	fwnode_handle_put(ep);
+	if (ret) {
+		dev_err(dev, "failed to parse output endpoint: %d\n", ret);
+		return ret;
+	}
+
+	switch (vep.bus_type) {
+	case V4L2_MBUS_BT656:
+		break;
+	case V4L2_MBUS_PARALLEL:
+		if (!(state->chip_info->flags & ADV7180_FLAG_SYNC_PINS)) {
+			dev_err(dev, "parallel bus not supported, no sync pins\n");
+			return -EINVAL;
+		}
+
+		/*
+		 * Data is always sampled on the rising edge of LLC. Without
+		 * explicit polarities, use the reset defaults of the chip.
+		 */
+		state->mbus_flags = V4L2_MBUS_PCLK_SAMPLE_RISING;
+		if (vep.bus.parallel.flags & V4L2_MBUS_HSYNC_ACTIVE_HIGH)
+			state->mbus_flags |= V4L2_MBUS_HSYNC_ACTIVE_HIGH;
+		else
+			state->mbus_flags |= V4L2_MBUS_HSYNC_ACTIVE_LOW;
+		if (vep.bus.parallel.flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
+			state->mbus_flags |= V4L2_MBUS_VSYNC_ACTIVE_LOW;
+		else
+			state->mbus_flags |= V4L2_MBUS_VSYNC_ACTIVE_HIGH;
+		break;
+	default:
+		dev_err(dev, "unsupported output bus type %u\n", vep.bus_type);
+		return -EINVAL;
+	}
+
+	state->mbus_type = vep.bus_type;
+
+	return 0;
+}
+
 static int adv7180_probe(struct i2c_client *client)
 {
 	struct device_node *np = client->dev.of_node;
@@ -1477,6 +1547,12 @@ static int adv7180_probe(struct i2c_client *client)
 	if (of_property_read_bool(np, "adv,force-bt656-4") ||
 	    of_property_read_bool(np, "adi,force-bt656-4"))
 		state->force_bt656_4 = true;
+
+	if (!(state->chip_info->flags & ADV7180_FLAG_MIPI_CSI2)) {
+		ret = adv7180_parse_output_endpoint(state);
+		if (ret)
+			return ret;
+	}
 
 	if (state->chip_info->flags & ADV7180_FLAG_MIPI_CSI2) {
 		state->csi_client =
