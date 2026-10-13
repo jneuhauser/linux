@@ -82,6 +82,21 @@ properties:
         $ref: /schemas/media/video-interfaces.yaml#
         unevaluatedProperties: false
 
+        properties:
+          bus-width:
+            const: 8
+
+          hsync-active:
+            description:
+              Active state of the HS pin. In parallel mode the ADV7280 outputs
+              DE on the HS pin, which is low during horizontal blanking. This
+              is described by hsync-active = <0>.
+
+          vsync-active: true
+
+          pclk-sample:
+            const: 1
+
   ports: true
 
 additionalProperties: false
@@ -214,6 +229,51 @@ allOf:
             - const: main
             - const: vpp
 
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: adi,adv7280
+    then:
+      properties:
+        port:
+          properties:
+            endpoint:
+              properties:
+                bus-type:
+                  enum:
+                    - 5 # Parallel
+                    - 6 # BT.656
+                  default: 6
+                  description:
+                    Output bus type. Without bus-type the output is BT.656
+                    with embedded synchronization.
+
+              dependentRequired:
+                hsync-active: [ bus-type ]
+                vsync-active: [ bus-type ]
+
+  - if:
+      properties:
+        compatible:
+          contains:
+            enum:
+              - adi,adv7180
+              - adi,adv7180cp
+              - adi,adv7180st
+              - adi,adv7182
+              - adi,adv7282
+    then:
+      properties:
+        port:
+          properties:
+            endpoint:
+              properties:
+                bus-type:
+                  const: 6
+                hsync-active: false
+                vsync-active: false
+
 examples:
   - |
     i2c {
@@ -278,6 +338,30 @@ examples:
                             adv7280_out: endpoint {
                                     bus-width = <8>;
                                     remote-endpoint = <&vin1ep>;
+                            };
+                    };
+            };
+    };
+
+  - |
+    #include <dt-bindings/media/video-interfaces.h>
+
+    i2c {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            composite-in@21 {
+                    compatible = "adi,adv7280";
+                    reg = <0x21>;
+
+                    port {
+                            adv7280_parallel_out: endpoint {
+                                    bus-type = <MEDIA_BUS_TYPE_PARALLEL>;
+                                    bus-width = <8>;
+                                    hsync-active = <0>;
+                                    vsync-active = <0>;
+                                    pclk-sample = <1>;
+                                    remote-endpoint = <&dcmipp_in>;
                             };
                     };
             };
