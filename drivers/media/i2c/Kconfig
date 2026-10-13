@@ -1091,6 +1091,7 @@ config VIDEO_ADV7180
 	select MEDIA_CONTROLLER
 	select VIDEO_V4L2_SUBDEV_API
 	select V4L2_ASYNC
+	select V4L2_FWNODE
 	help
 	  Support for the Analog Devices ADV7180 video decoder.
 
